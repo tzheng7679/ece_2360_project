@@ -1,0 +1,103 @@
+---
+title: (A Pointless) Bluetooth Notification LED
+author: Tony Zheng 
+bibliography: project.bib
+csl: ieee.csl
+format:
+    typst:
+        mainfont: noto sans
+        papersize: us-letter
+---
+
+{{< pagebreak >}}
+
+# Introduction
+
+My project is a Bluetooth notification system connected to my laptop. This uses my ESP32 controller's Bluetooth connectivity to connect to my laptop, with my ESP32 connected to a RBG LED and speaker activated on a notification.
+The color of the LED and sound the speaker makes varies based on the type of notification received: for example, the LED flashes red and the speaker makes a whining sound when my laptop sends a warning notification. 
+On a success notification (like a file transfer finishing), the LED flashes green and the speaker plays a pleasant sound. Additionally, the LED brightness and speaker volume is modifiable with potentiometers ---  you can change the volume and brightness individually with a potentiometer for each.
+
+As the ESP32 is connected over Bluetooth, it can activate the LED and buzzer even when not plugged in to the laptop; it works as long as it is powered and connected wirelessly over Bluetooth.
+
+I chose this project because I saw an advertisement for the Google Pixel 11 and the main selling point --- and, as far as I can tell, the only difference from the Pixel 10 --- was that it has a notification LED on the back [@madebygoogleGooglePixel112026]. I thought that it was pretty pointless to release a new phone just to add that, so I'm doing this out of spite towards Google. If I can make a notification LED, then it's pretty pointless for them to make such a big deal of it. And, to a lesser extent, I think that the LED is pretty, so I thought that it might be a neat thing to have.
+
+# Design
+
+## Block Diagram
+
+![Block Diagram](img/block_diagram.svg){#fig-block-diagram}
+
+As shown in @fig-block-diagram, my project consists of my laptop, which runs a program that, after a laptop notification is received, sends the notification's type over Bluetooth to the ESP32. Based on the notification type, the ESP32 chooses a sound and LED color. Then, the ESP32 reads the voltage from the two potentiometers, one determining the brightness of the LED and the other the volume of the speaker. The higher the voltage from each of these potentiometers, the higher the brightness/volume will be. The ESP32 then plays a sound on the speakers and sets the color and brightness of the RGB LED.
+
+## Circuit Diagram
+
+![Circuit Diagram](img/circuit.png){#fig-circuit-diagram}
+
+### Potentiometers
+
+The brightness of the LED and speaker volume is determined by the output voltage of the potentiometers, shown in blue. The analog level of `GPIO32` determines the brightness of the LED: a higher level incerases the brightness of all LEDs, and a lower level decreases the brightness of all LEDs.
+
+The analog level of `GPIO33` determines the loudness of the speaker; the higher, the louder the speaker will be when a notification is received.
+
+## RGB LED
+
+In red is the RGP LED, which is represented as 3 separate LEDs. The brightness of each LED depends on the color for the notification and how the overall brightness of the LED.
+
+## Speaker
+
+In green is a speaker and audio amplifier module. The `L` pin on the amplifier transmits the mono audio signal; `V1` and `V2` are connected to the poles of the speaker @AudioModuleSpeakera. This matches the setup in the Sunfounder tutorial @73BluetoothAudio to make it easier to build.
+
+## Software Plan
+
+I will use a Python script that will listen for system notifications. When it receives one, it will determine what type it is, and send a Bluetooth signal to the ESP32 with the notification type.
+
+Upon receiving the Bluetooth signal, the ESP32 will pick the sound and LED color, change those based on the potentiometer values, and output those to the LED and Audio Module for 5 seconds before turning them off.
+
+### Pseudocode
+
+```python
+# python script
+notification_type = await_notification()
+send_bluetooth_signal('ESP32', notification_type)
+
+# esp32 code
+notification_type = await_bluetooth_signal()
+brightness = read_brightness_potentiometer()
+volume = read_volume_potentiometer()
+
+color = choose_color(notification_type) * brightness
+sound_signal = choose_sound(notification_type) * volume
+
+set_led(color)
+play_sound(sound_signal, volume)
+
+delay(5s)
+
+set_led('off')
+play_sound('none')
+```
+
+## Complexity
+
+### Inputs
+
+The ESP32 receives input over Bluetooth; when it receives a signal, it activates the LEDs and speaker. Another input is the potentiometer, whose output voltage determines the LED brightness and speaker volume.
+
+### Outputs
+
+The ESP32 will turn on RGB LED and speakers when a notification is received.
+
+### New Components
+
+New components are the speaker/amp and an RGB LED, which will make a sound and light up, respectively, when a notification is received.
+
+### Complexity Score
+
+| Item                 | Score     |
+|----------------------|-----------|
+| RGB LED              | 2         |
+| Audio Module         | 4         |
+| Bluetooth            | 5         |
+| Potentiometers       | 1 + 1 = 2 |
+| **Complexity Score** | **13**    |
+

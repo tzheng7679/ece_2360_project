@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "pydbus>=0.6.0",
+    "dbus-fast>=5.2.0",
     "pygobject>=3.58.1",
     "pyserial>=3.5",
 ]
