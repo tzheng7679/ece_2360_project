@@ -1,40 +1,64 @@
-from dbus_fast.aio import MessageBus
+"""Desktop Notification Listener for ESP32 Bluetooth (ECE 2360).
+
+Listens for Linux desktop notifications over D-Bus, classifies them into alert
+categories (WARNING, SUCCESS, INFO, LOW), and prints the notification details
+along with the corresponding Bluetooth signal.
+
+Optionally transmits the signal to an ESP32 via Bluetooth RFCOMM or Serial.
+"""
 
 import asyncio
+
+from bleak import BleakClient
+from dbus_fast import Message, MessageType
+from dbus_fast.aio import MessageBus
+
+from bluetooth import get_client
+from handlers import INTERFACES, Rule
+
+
+async def add_match_rule(bus: MessageBus, rules: list[Rule]):
+    reply = await bus.call(
+        Message(
+            destination="org.freedesktop.DBus",
+            path="/org/freedesktop/DBus",
+            interface="org.freedesktop.DBus.Monitoring",
+            member="BecomeMonitor",
+            signature="asu",
+            body=[
+                [
+                    f"path_namespace='{rule.path}',member='{rule.member}'"
+                    for rule in rules
+                ],
+                0,
+            ],
+        )
+    )
+    assert reply.message_type == MessageType.METHOD_RETURN
+
+
+def filtered_handler(m: Message, bt_cli: BleakClient):
+    async def handler():
+        for rule in INTERFACES:
+            if m.path and rule.path in m.path and rule.member == m.member:
+                return await rule.handler(m, bt_cli)
+
+    asyncio.create_task(handler())
+
+    return True
 
 
 async def main():
     bus = await MessageBus().connect()
-    # the introspection xml would normally be included in your project, but
-    # this is convenient for development
-    introspection = await bus.introspect(
-        "org.mpris.MediaPlayer2.vlc", "/org/mpris/MediaPlayer2"
-    )
+    bt_cli = await get_client()
 
-    obj = bus.get_proxy_object(
-        "org.mpris.MediaPlayer2.vlc", "/org/mpris/MediaPlayer2", introspection
-    )
-    player = obj.get_interface("org.mpris.MediaPlayer2.Player")
-    properties = obj.get_interface("org.freedesktop.DBus.Properties")
+    # start all of the requests then wait for them all to finish
+    await add_match_rule(bus, INTERFACES)
 
-    # call methods on the interface (this causes the media player to play)
-    await player.call_play()
+    bus.add_message_handler(lambda m: filtered_handler(m, bt_cli))
 
-    volume = await player.get_volume()
-    print(f"current volume: {volume}, setting to 0.5")
-
-    await player.set_volume(0.5)
-
-    # listen to signals
-    def on_properties_changed(
-        interface_name, changed_properties, invalidated_properties
-    ):
-        for changed, variant in changed_properties.items():
-            print(f"property changed: {changed} - {variant.value}")
-
-    properties.on_properties_changed(on_properties_changed)
-
-    await asyncio.Event().wait()
+    await bus.wait_for_disconnect()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,21 +1,17 @@
 [project]
 name = "project"
 version = "0.1.0"
-description = "Add your description here"
+description = "Desktop notification listener for ESP32 Bluetooth"
 readme = "README.md"
 authors = [
     { name = "Tony Zheng", email = "tzheng7679@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "bleak>=3.1.0",
     "dbus-fast>=5.2.0",
-    "pygobject>=3.58.1",
     "pyserial>=3.5",
 ]
 
 [project.scripts]
-project = "project:main"
-
-[build-system]
-requires = ["uv_build>=0.13.0,<0.14.0"]
-build-backend = "uv_build"
+listen = "listen:main"

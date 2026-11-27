@@ -101,3 +101,49 @@ New components are the speaker/amp and an RGB LED, which will make a sound and l
 | Potentiometers       | 1 + 1 = 2 |
 | **Complexity Score** | **13**    |
 
+# Build Process
+
+![The initial circuit](img/init_circuit.jpg){#fig-init-circuit}
+
+I started off by building the initial circuit @fig-init-circuit. THis is where I tested that my LED setup worked, with initial code @lst-led-test-code
+
+## Code Libraries Used
+
+I used dbus-fast to connect to my computer's notification interface: @BluetoothDevicesDbusfastFaster.
+
+
+## Code Progress {.appendix}
+
+### LED Test Code
+
+::: {#lst-led-test-code}
+```cpp
+const int LED_RED = 27;
+const int LED_GREEN = 14;
+const int LED_BLUE = 12;
+const int LED_FREQ = 5000;
+const int RESOLUTION = 8;
+
+void setColor(int red, int green, int blue) {
+  // where red, green, blue in [0, 255]
+  ledcWrite(LED_RED, red);
+  ledcWrite(LED_GREEN, green);
+  ledcWrite(LED_BLUE, blue);
+}
+
+void setup() {
+  Serial.begin(115200);
+  // put your setup code here, to run once:
+  ledcAttach(LED_RED, LED_FREQ, RESOLUTION);
+  ledcAttach(LED_GREEN, LED_FREQ, RESOLUTION);
+  ledcAttach(LED_BLUE, LED_FREQ, RESOLUTION);
+}
+
+
+void loop() {
+  setColor(128, 0, 128); // should be purple
+}
+```
+
+LED Testing Code. Sets the LED to purple, which it did correctly (it looked purple, but my phone's camera shifted the color to blue) 
+:::
