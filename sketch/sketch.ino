@@ -1,13 +1,16 @@
 #include <mutex>
+#include <LittleFS.h>
+
 #include "BLEDevice.h"
 #include "BLEServer.h"
 #include "BLEUtils.h"
 #include "BLE2902.h"
+
 #include "AudioGeneratorMP3.h"
 #include "AudioFileSourceLittleFS.h"
-#include "AudioOutputI2S.h"
+#include "AudioOutputI2SNoDAC.h"
 
-const int POT_PIN_MAX_VALUE = 1023;
+const int POT_PIN_MAX_VALUE = 4095; // ESP32 ADC is 12-bit (0-4095)
 
 #pragma region RGB LED CONTROL
 
@@ -23,7 +26,6 @@ int red = 0;
 int green = 0;
 int blue = 0;
 
-// sets color of the led; accepts red green and blue levels as integers 0-255
 void setColor(int pot_reading) {
   std::scoped_lock<std::mutex> lock(mtx);
   ledcWrite(LED_RED, red * pot_reading / POT_PIN_MAX_VALUE);
@@ -41,72 +43,90 @@ const int FAILURE = 1;
 const int SUCCESS = 2;
 const int NEUTRAL = 3;
 
-AudioGeneratorMP3 *mp3;
-AudioFileSourceLittleFS *FAILURE_FILE;
-AudioFileSourceLittleFS *SUCCESS_FILE;
-AudioFileSourceLittleFS *NEUTRAL_FILE;
-AudioOutputI2S *out;
+AudioGeneratorMP3 *mp3 = nullptr;
+AudioFileSourceLittleFS *file = nullptr;
+AudioOutputI2SNoDAC *out = nullptr;
 
 void setupSound() {
-  FAILURE_FILE = new AudioFileSourceLittleFS("/failure.mp3");
-  SUCCESS_FILE = new AudioFileSourceLittleFS("/success.mp3");
-  NEUTRAL_FILE = new AudioFileSourceLittleFS("/neutral.mp3");
-
-  out = new AudioOutputI2S(0, 1);
-  out->SetOutputModeMono(true);
-  mp3 = new AudioGeneratorMP3();
-}
-
-void playSound() {
-  if (mp3 && mp3->isRunning()) {
-    if(!mp3->loop()) mp3->stop();
-    delete mp3;
-    mp3 = nullptr;
-  } else {
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed!");
     return;
   }
 
-  AudioFileSourceLittleFS *file;
+  out = new AudioOutputI2SNoDAC(25);
+  out->SetOutputModeMono(true);
+  out->SetGain(0.0); // Keep silent until a sound actually starts
+}
 
-  std::scoped_lock<std::mutex> lock(mtx);
-  if (sound == 0) return;
-  Serial.printf("Playing sound");
-  if (sound == FAILURE) file = FAILURE_FILE;
-  if (sound == SUCCESS) file = SUCCESS_FILE;
-  if (sound == NEUTRAL) file = NEUTRAL_FILE;
+void stopSound() {
+  if (mp3) {
+    if (mp3->isRunning()) mp3->stop();
+    delete mp3;
+    mp3 = nullptr;
+  }
+  if (file) {
+    delete file;
+    file = nullptr;
+  }
+  if (out) {
+    out->SetGain(0.0); // Prevents idle DAC hiss/static
+  }
+}
+
+void playSound() {
+  // 1. Feed the active MP3 decoder if a track is currently playing
+  if (mp3 && mp3->isRunning()) {
+    if (!mp3->loop()) {
+      stopSound();
+      Serial.println("Finished sound");
+    }
+    return;
+  }
+
+  // 2. Check if BLE wrote a new sound trigger
+  int requestedSound = SILENT;
+  {
+    std::scoped_lock<std::mutex> lock(mtx);
+    requestedSound = sound;
+    sound = SILENT; // Consume the trigger so it doesn't restart every loop()
+  }
+
+  if (requestedSound == SILENT) return;
+
+  const char *path = nullptr;
+  if (requestedSound == FAILURE) path = "/failure.mp3";
+  else if (requestedSound == SUCCESS) path = "/success.mp3";
+  else if (requestedSound == NEUTRAL) path = "/neutral.mp3";
+  else return;
+
+  stopSound(); // Clean up any previous file/decoder before opening a new one
+
+  Serial.printf("Playing %s\n", path);
+  file = new AudioFileSourceLittleFS(path);
   mp3 = new AudioGeneratorMP3();
+  out->SetGain(0.8);
   mp3->begin(file, out);
 }
 #pragma endregion
 
 #pragma region BLUETOOTH CONTROL
-// Define the Bluetooth device name
 const char *bleName = "ESP32_Bluetooth";
+volatile unsigned long lastMessageTime = 0;
 
-unsigned long lastMessageTime = 0;
-
-// Define the UUIDs of the service and characteristics
 #define SERVICE_UUID "01a219a4-df08-71be-b29e-15f1d0017ddf"
 #define CHARACTERISTIC_UUID_RX "01a219a5-0c99-73f9-9fca-973d5e5b121d"
 
-// Define the Bluetooth characteristic
-BLECharacteristic *pCharacteristic;
-
-// Define the BLE server callbacks
 class MyServerCallbacks : public BLEServerCallbacks {
-  // Print the crnnection message when a client is connected
   void onConnect(BLEServer *pServer) {
     Serial.println("Connected");
   }
-  // Print the disconnection message when a client is disconnected
   void onDisconnect(BLEServer *pServer) {
     Serial.println("Disconnected");
-    delay(1000);
+    delay(500);
     pServer->startAdvertising();
   }
 };
 
-// Define the BLE characteristic callbacks
 class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     uint8_t *value = pCharacteristic->getData();
@@ -123,39 +143,33 @@ class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-// Initialize the Bluetooth BLE
 void setupBLE() {
-  BLEDevice::init(bleName);                        // Initialize the BLE device
-  BLEServer *pServer = BLEDevice::createServer();  // Create the BLE server
-  // Print the error message if the BLE server creation fails
+  BLEDevice::init(bleName);
+  BLEServer *pServer = BLEDevice::createServer();
   if (pServer == nullptr) {
     Serial.println("Error creating BLE server");
     return;
   }
-  pServer->setCallbacks(new MyServerCallbacks());  // Set the BLE server callbacks
+  pServer->setCallbacks(new MyServerCallbacks());
 
-  // Create the BLE service
   BLEService *pService = pServer->createService(SERVICE_UUID);
-  // Print the error message if the BLE service creation fails
   if (pService == nullptr) {
     Serial.println("Error creating BLE service");
     return;
   }
-  // Create the BLE characteristic for receiving data
-  BLECharacteristic *pCharacteristicRX = pService->createCharacteristic(CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
-  pCharacteristicRX->setCallbacks(new MyCharacteristicCallbacks());  // Set the BLE characteristic callbacks
-  pService->start();                                                 // Start the BLE service
-  pServer->getAdvertising()->start();                                // Start advertising
-  Serial.println("Waiting for a client connection...");              // Wait for a client connection
+  BLECharacteristic *pCharacteristicRX = pService->createCharacteristic(
+      CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
+  pCharacteristicRX->setCallbacks(new MyCharacteristicCallbacks());
+  pService->start();
+  pServer->getAdvertising()->start();
+  Serial.println("Waiting for a client connection...");
 }
-
 #pragma endregion
 
 #pragma region main
 
 void setup() {
   Serial.begin(115200);
-  // put your setup code here, to run once:
   ledcAttach(LED_RED, LED_FREQ, RESOLUTION);
   ledcAttach(LED_GREEN, LED_FREQ, RESOLUTION);
   ledcAttach(LED_BLUE, LED_FREQ, RESOLUTION);
@@ -163,15 +177,13 @@ void setup() {
   setupSound();
 }
 
-
 void loop() {
-  // When the received text is not empty and the time since the last message is over 1 second
-  // Send a notification and print the received text
   setColor(analogRead(BRIGHTNESS_POT_PIN));
   playSound();
+
   std::scoped_lock<std::mutex> lock(mtx);
-  if (millis() - lastMessageTime > 1000) {
-    red = green = blue = sound = 0;
+  if (millis() - lastMessageTime > 10000) {
+    red = green = blue = 0;
   }
 }
 

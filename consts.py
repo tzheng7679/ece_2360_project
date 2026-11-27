@@ -1,6 +1,7 @@
 from enum import Enum
 
 BAD_KEYWORDS = [
+    "deactivated",
     "error",
     "fail",
     "failed",
@@ -13,6 +14,7 @@ BAD_KEYWORDS = [
     "danger",
 ]
 GOOD_KEYWORDS = [
+    " activated",
     "success",
     "complete",
     "completed",

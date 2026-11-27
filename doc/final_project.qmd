@@ -77,7 +77,7 @@ set_led('off')
 play_sound('none')
 ```
 
-## Complexity
+## Preliminary Complexity
 
 ### Inputs
 
@@ -101,18 +101,61 @@ New components are the speaker/amp and an RGB LED, which will make a sound and l
 | Potentiometers       | 1 + 1 = 2 |
 | **Complexity Score** | **13**    |
 
-# Build Process
+## Final Design
+
+## Build Process
+
+### Arduino Setup
 
 ![The initial circuit](img/init_circuit.jpg){#fig-init-circuit}
 
-I started off by building the initial circuit @fig-init-circuit. THis is where I tested that my LED setup worked, with initial code @lst-led-test-code
+I started off by building the initial circuit @fig-init-circuit. This is where I tested that my LED setup worked, with initial code @lst-led-test-code.
 
-## Code Libraries Used
+I then moved to testing the Bluetooth, making sure that I could receive signals over a connection; I tested that I could control the LEDs with a Bluetooth signal while using a dummy value for the sound to play --- specifically, I had the ESP32 accept a 4 byte value, with the first 3 bytes signalling the color of the LED and the 4th byte signalling what sound to play. This followed content on the Sunfounder tutorial for controlling an RGB LED over Bluetooth @72BluetoothControl, though I didn't use the app specified in the tutorial, in favor of coding the Bluetooth client in my Python script.
 
-I used dbus-fast to connect to my computer's notification interface: @BluetoothDevicesDbusfastFaster.
+I then wired my speaker module according to @73BluetoothAudio, though didn't follow the code provided. Instead, I used the audio API provided in header files like AudioGeneratorMP3.h AudioFileSourceLittleFS.h, AudioOutputI2SNoDAC.h so that I could play files that I uploaded to the ESP32 with LittleFS. The .mp3 audio files I used were gathered from @130000FreeSound. I tested if the speaker worked as intended, but only a loud pop at the start and end of an audio file was audible; this turned out to be due to using AudioOutputI2S, when I needed to use AudioOutputI2SNoDAC to properly handle the audio. After switching to this, the speaker worked as intended, but had a fair amount of static. As such, I added a high-pass filter with two capacitors from the kit before the input to the audio amplifier, which removed some static; I switched to a 1 k$\Omega$ resistor from 10 k$\Omega$ to compensate for the reduced volume after adding the filter.
 
+### Python Setup
+
+I used dbus-fast to connect to my computer's notification interface @BluetoothDevicesDbusfastFaster. THis library allowed me to connect to the Linux DBus, which is what messages (including notifications) are sent over. In short, I used this to listen to notifications to my desktop, as well as job status updates --- which was for listening to the status of file transfers.
+
+
+## Functionality
+
+Link to video: [https://photos.app.goo.gl/kMp4dF2hSifwEMBp7](https://photos.app.goo.gl/kMp4dF2hSifwEMBp7).
+
+This video demonstrates the project showing notifications with the LED and speaker, with the color and sound differing depending on the type of notification. It also shows changing the LED brightness based on the potentiometer setting, as well as it working for tracking file transfers (albeit with a delay between the file transfer finishing and activating the LED and speaker).
+
+## Final Complexity 
+
+Complexity is slightly different from [the initial score](#complexity-score): I removed 1 of the potentiometers (only keeping 1 for the LEDs, since I didn't have the time to do one for the speaker), and added 2 capacitors for the speaker's filter. Otherwise, the inputs, outputs, and new components remain the same as in [the preliminary design](#preliminary-complexity), minus the potentiometer for speaker volume:
+
+### Inputs
+
+The ESP32 receives input over Bluetooth; when it receives a signal, it activates the LEDs and speaker. Another input is the potentiometer, whose output voltage determines the LED brightness. This still meets the requirement for one input.
+
+### Outputs
+
+The ESP32 will turn on RGB LED and speakers when a notification is received. This still meets the requirement for one output.
+
+### New Components
+
+New components are the speaker/amp and an RGB LED, which will make a sound and light up, respectively, when a notification is received. This still uses new components.
+
+### Final Complexity Score
+
+
+| Item                 | Score     |
+|----------------------|-----------|
+| RGB LED              | 2         |
+| Audio Module         | 4         |
+| Bluetooth            | 5         |
+| Potentiometers       | 1         |
+| Capacitors           | 1 + 1 = 2 |
+| **Complexity Score** | **14**    |
 
 ## Code Progress {.appendix}
+
 
 ### LED Test Code
 
