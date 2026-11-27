@@ -117,8 +117,9 @@ I then wired my speaker module according to @73BluetoothAudio, though didn't fol
 
 ### Python Setup
 
-I used dbus-fast to connect to my computer's notification interface @BluetoothDevicesDbusfastFaster. THis library allowed me to connect to the Linux DBus, which is what messages (including notifications) are sent over. In short, I used this to listen to notifications to my desktop, as well as job status updates --- which was for listening to the status of file transfers.
+I used dbus-fast to connect to my computer's notification interface @BluetoothDevicesDbusfastFaster. This library allowed me to connect to the Linux DBus, which is what messages (including notifications) are sent over. In short, I used this to listen to notifications to my desktop, as well as job status updates --- which was for listening to the status of file transfers. I initially had Gemini generate a script called `ai_listen.py` as a reference for how to connect, but I ultimately made my own script without AI assistance and did not reference the AI script when making it.
 
+The code is split over multiple files, so I uploaded it to a [GitHub repostiory](https://github.com/tzheng7679/ece_2360_project) at 
 
 ## Functionality
 
