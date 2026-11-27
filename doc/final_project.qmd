@@ -3,9 +3,19 @@ title: (A Pointless) Bluetooth Notification LED
 author: Tony Zheng 
 bibliography: project.bib
 csl: ieee.csl
+mainfont: noto sans
 format:
+    pdf:
+        include-in-header:
+            text: |
+              \usepackage{longtable}
+              \usepackage[breakable]{tcolorbox}
+              \usepackage{caption}
+              \allowdisplaybreaks
+              \AtBeginDocument{
+                \renewenvironment{codelisting}[1][]{\captionsetup{type=codelisting}}{}
+              }
     typst:
-        mainfont: noto sans
         papersize: us-letter
 ---
 
@@ -41,7 +51,7 @@ The analog level of `GPIO33` determines the loudness of the speaker; the higher,
 
 ## RGB LED
 
-In red is the RGP LED, which is represented as 3 separate LEDs. The brightness of each LED depends on the color for the notification and how the overall brightness of the LED.
+In red is the RGB LED, which is represented as 3 separate LEDs. The brightness of each LED depends on the color for the notification and how the overall brightness of the LED.
 
 ## Speaker
 
@@ -101,7 +111,7 @@ New components are the speaker/amp and an RGB LED, which will make a sound and l
 | Potentiometers       | 1 + 1 = 2 |
 | **Complexity Score** | **13**    |
 
-## Final Design
+# Final Design
 
 ## Build Process
 
@@ -115,11 +125,13 @@ I then moved to testing the Bluetooth, making sure that I could receive signals 
 
 I then wired my speaker module according to @73BluetoothAudio, though didn't follow the code provided. Instead, I used the audio API provided in header files like AudioGeneratorMP3.h AudioFileSourceLittleFS.h, AudioOutputI2SNoDAC.h so that I could play files that I uploaded to the ESP32 with LittleFS. The .mp3 audio files I used were gathered from @130000FreeSound. I tested if the speaker worked as intended, but only a loud pop at the start and end of an audio file was audible; this turned out to be due to using AudioOutputI2S, when I needed to use AudioOutputI2SNoDAC to properly handle the audio. After switching to this, the speaker worked as intended, but had a fair amount of static. As such, I added a high-pass filter with two capacitors from the kit before the input to the audio amplifier, which removed some static; I switched to a 1 k$\Omega$ resistor from 10 k$\Omega$ to compensate for the reduced volume after adding the filter.
 
+The Arduino script I used can be found in [the `sketch` folder of a GitHub repository of this project's code](https://github.com/tzheng7679/ece_2360_project/tree/main/sketch), and is included in @lst-esp32-code.
+
 ### Python Setup
 
 I used dbus-fast to connect to my computer's notification interface @BluetoothDevicesDbusfastFaster. This library allowed me to connect to the Linux DBus, which is what messages (including notifications) are sent over. In short, I used this to listen to notifications to my desktop, as well as job status updates --- which was for listening to the status of file transfers. I initially had Gemini generate a script called `ai_listen.py` as a reference for how to connect, but I ultimately made my own script without AI assistance and did not reference the AI script when making it.
 
-The code is split over multiple files, so I uploaded it to a [GitHub repostiory](https://github.com/tzheng7679/ece_2360_project) at 
+The code is in the Python files at the root directory of the [GitHub repository](https://github.com/tzheng7679/ece_2360_project); this contains all files that I used as well as `ai_listen.py`.
 
 ## Functionality
 
@@ -137,11 +149,11 @@ The ESP32 receives input over Bluetooth; when it receives a signal, it activates
 
 ### Outputs
 
-The ESP32 will turn on RGB LED and speakers when a notification is received. This still meets the requirement for one output.
+The ESP32 turns on RGB LED and speakers when a notification is received. This still meets the requirement for one output.
 
 ### New Components
 
-New components are the speaker/amp and an RGB LED, which will make a sound and light up, respectively, when a notification is received. This still uses new components.
+New components were the speaker/amp and an RGB LED, which make sound and light up, respectively, when a notification is received. These are still new components.
 
 ### Final Complexity Score
 
@@ -155,10 +167,22 @@ New components are the speaker/amp and an RGB LED, which will make a sound and l
 | Capacitors           | 1 + 1 = 2 |
 | **Complexity Score** | **14**    |
 
-## Code Progress {.appendix}
+# Reflection
 
+This project went pretty well. Implementation went pretty smoothly, and I learned a good deal about how Linux handles messages (which is useful, though not necessarily related to electronics).
 
-### LED Test Code
+Most things worked as intended; the only missing functionality on the board was a potentiometer for controlling speaker volume, as well as greater support on the desktop end for monitoring events. I only tested it with notifications sent with `notify-send` in bash, as well as file downloads in Firefox and transfers in Dolphin. So there is limited usage currently for my project, as many events are not sent over the Linux interfaces that I monitored.
+
+As such, the biggest room for improvement would be to add support for more interfaces and events that occur (such as if my phone connects successfully to my computer or device volume/brightness changes). I think that it would also be cool to use the display module instead of the RGB LED, so that I have a greater range of things to show for differing notifications and events.
+
+# References
+
+::: {#refs}
+:::
+
+# Code {.appendix}
+
+## LED Test Code
 
 ::: {#lst-led-test-code}
 ```cpp
@@ -190,4 +214,204 @@ void loop() {
 ```
 
 LED Testing Code. Sets the LED to purple, which it did correctly (it looked purple, but my phone's camera shifted the color to blue) 
+:::
+
+## Final ESP32 Code
+
+::: {#lst-esp32-code}
+
+```cpp
+#include <mutex>
+#include <LittleFS.h>
+
+#include "BLEDevice.h"
+#include "BLEServer.h"
+#include "BLEUtils.h"
+#include "BLE2902.h"
+
+#include "AudioGeneratorMP3.h"
+#include "AudioFileSourceLittleFS.h"
+#include "AudioOutputI2SNoDAC.h"
+
+const int POT_PIN_MAX_VALUE = 4095; // ESP32 ADC is 12-bit (0-4095)
+
+#pragma region RGB LED CONTROL
+
+const int LED_RED = 27;
+const int LED_GREEN = 14;
+const int LED_BLUE = 12;
+const int LED_FREQ = 5000;
+const int BRIGHTNESS_POT_PIN = 32;
+const int RESOLUTION = 8;
+
+std::mutex mtx;
+int red = 0;
+int green = 0;
+int blue = 0;
+
+void setColor(int pot_reading) {
+  std::scoped_lock<std::mutex> lock(mtx);
+  ledcWrite(LED_RED, red * pot_reading / POT_PIN_MAX_VALUE);
+  ledcWrite(LED_GREEN, green * pot_reading / POT_PIN_MAX_VALUE);
+  ledcWrite(LED_BLUE, blue * pot_reading / POT_PIN_MAX_VALUE);
+}
+
+#pragma endregion
+
+#pragma region SOUND CONTROL
+int sound = 0;
+
+const int SILENT = 0;
+const int FAILURE = 1;
+const int SUCCESS = 2;
+const int NEUTRAL = 3;
+
+AudioGeneratorMP3 *mp3 = nullptr;
+AudioFileSourceLittleFS *file = nullptr;
+AudioOutputI2SNoDAC *out = nullptr;
+
+void setupSound() {
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed!");
+    return;
+  }
+
+  out = new AudioOutputI2SNoDAC(25);
+  out->SetOutputModeMono(true);
+  out->SetGain(0.0); // Keep silent until a sound actually starts
+}
+
+void stopSound() {
+  if (mp3) {
+    if (mp3->isRunning()) mp3->stop();
+    delete mp3;
+    mp3 = nullptr;
+  }
+  if (file) {
+    delete file;
+    file = nullptr;
+  }
+  if (out) {
+    out->SetGain(0.0); // Prevents idle DAC hiss/static
+  }
+}
+
+void playSound() {
+  // 1. Feed the active MP3 decoder if a track is currently playing
+  if (mp3 && mp3->isRunning()) {
+    if (!mp3->loop()) {
+      stopSound();
+      Serial.println("Finished sound");
+    }
+    return;
+  }
+
+  // 2. Check if BLE wrote a new sound trigger
+  int requestedSound = SILENT;
+  {
+    std::scoped_lock<std::mutex> lock(mtx);
+    requestedSound = sound;
+    sound = SILENT; // Consume the trigger so it doesn't restart every loop()
+  }
+
+  if (requestedSound == SILENT) return;
+
+  const char *path = nullptr;
+  if (requestedSound == FAILURE) path = "/failure.mp3";
+  else if (requestedSound == SUCCESS) path = "/success.mp3";
+  else if (requestedSound == NEUTRAL) path = "/neutral.mp3";
+  else return;
+
+  stopSound(); // Clean up any previous file/decoder before opening a new one
+
+  Serial.printf("Playing %s\n", path);
+  file = new AudioFileSourceLittleFS(path);
+  mp3 = new AudioGeneratorMP3();
+  out->SetGain(0.8);
+  mp3->begin(file, out);
+}
+#pragma endregion
+
+#pragma region BLUETOOTH CONTROL
+const char *bleName = "ESP32_Bluetooth";
+volatile unsigned long lastMessageTime = 0;
+
+#define SERVICE_UUID "01a219a4-df08-71be-b29e-15f1d0017ddf"
+#define CHARACTERISTIC_UUID_RX "01a219a5-0c99-73f9-9fca-973d5e5b121d"
+
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *pServer) {
+    Serial.println("Connected");
+  }
+  void onDisconnect(BLEServer *pServer) {
+    Serial.println("Disconnected");
+    delay(500);
+    pServer->startAdvertising();
+  }
+};
+
+class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    uint8_t *value = pCharacteristic->getData();
+    size_t len = pCharacteristic->getLength();
+
+    if (len != 4) return;
+
+    std::scoped_lock<std::mutex> lock(mtx);
+    lastMessageTime = millis();
+    red = value[0];
+    green = value[1];
+    blue = value[2];
+    sound = value[3];
+  }
+};
+
+void setupBLE() {
+  BLEDevice::init(bleName);
+  BLEServer *pServer = BLEDevice::createServer();
+  if (pServer == nullptr) {
+    Serial.println("Error creating BLE server");
+    return;
+  }
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  if (pService == nullptr) {
+    Serial.println("Error creating BLE service");
+    return;
+  }
+  BLECharacteristic *pCharacteristicRX = pService->createCharacteristic(
+      CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
+  pCharacteristicRX->setCallbacks(new MyCharacteristicCallbacks());
+  pService->start();
+  pServer->getAdvertising()->start();
+  Serial.println("Waiting for a client connection...");
+}
+#pragma endregion
+
+#pragma region main
+
+void setup() {
+  Serial.begin(115200);
+  ledcAttach(LED_RED, LED_FREQ, RESOLUTION);
+  ledcAttach(LED_GREEN, LED_FREQ, RESOLUTION);
+  ledcAttach(LED_BLUE, LED_FREQ, RESOLUTION);
+  setupBLE();
+  setupSound();
+}
+
+void loop() {
+  setColor(analogRead(BRIGHTNESS_POT_PIN));
+  playSound();
+
+  std::scoped_lock<std::mutex> lock(mtx);
+  if (millis() - lastMessageTime > 10000) {
+    red = green = blue = 0;
+  }
+}
+
+#pragma endregion
+```
+
+Final code used on the ESP32
 :::
